@@ -2,77 +2,46 @@
 
 ## Цель работы
 
-Реализовать REST API для варианта 2 «Школьник». Предоставить CRUD, частичное обновление и статистику по школам и классам.
+Реализовать REST API для школьников по варианту 2. Предоставить CRUD, частичное обновление и статистику по школам и классам.
 
 ## Архитектура проекта
 
-Стек включает Java 17, Spring Boot 3.5.16, Maven Wrapper и Spring MVC, Spring Data JPA, H2, Jackson, Jakarta Validation.
-
-- REST-контроллер принимает и возвращает JSON. Обработка ошибок формирует русскоязычные сообщения.
-- Сервис проверяет связь школы и класса и управляет транзакциями. Репозиторий использует `EntityManager` и JPQL.
-- Для изменения записи репозиторий блокирует её на время транзакции. Адрес принадлежит школьнику и удаляется вместе с ним.
-- Аннотации `@RestController`, `@RequestBody`, `@PatchMapping`, `@Entity`, `@Transactional`, `@Valid`.
+- **Стек:** Java 17, Spring Boot 3.5.16, Maven Wrapper, Spring MVC, Spring Data JPA, Jackson, Jakarta Validation.
+- **СУБД:** H2 в памяти. При перезапуске восстанавливаются демонстрационные данные.
+- **Основные слои:**
+  - **Controller** — `SchoolboyController` обслуживает JSON-маршруты `/api/schoolboys` и `/api/schools`. `ApiErrors` формирует ответы об ошибках.
+  - **Service** — `SchoolboyService` проверяет связь школы и класса и управляет транзакциями. `SchoolboyPatch` применяет частичные изменения.
+  - **Repository** — `JpaSchoolboyStore` использует `EntityManager` и JPQL для чтения, записи и формирования статистики.
+- **Ключевые аннотации:** `@RestController`, `@RequestBody`, `@PatchMapping`, `@RestControllerAdvice`, `@Entity`, `@Transactional`, `@Valid`.
+- **Описание моделей данных и DTO**
+  - JPA-сущности `Schoolboy`, `Address`, `School` и `SchoolClass` хранят личные данные, домашний адрес, школу и класс.
+  - `SchoolboyData` принимает личные данные, `schoolId`, `classId` и вложенный `AddressData`. `SchoolboyView` добавляет к этим данным идентификатор и названия школы и класса.
+  - `Catalog` содержит списки `SchoolInfo` и `ClassInfo`. `ClassStatistics` возвращает количество школьников по школе и классу.
 
 ## Алгоритм работы
 
-1. Получите доступные школы и классы на `GET /api/schools`.
-2. Выполните действия со школьниками по таблице ниже.
-3. Проверьте формат запроса и сверьте статус ответа. Некорректный JSON, поля или сочетание школы и класса дают HTTP 400. Для отсутствующего идентификатора возвращается HTTP 404.
+1. Получить доступные школы и классы через `GET /api/schools`.
+2. Передать данные школьника в JSON. Запрос POST создаёт запись и возвращает HTTP 201, а PUT заменяет её данные. PATCH изменяет только переданные поля.
+3. Получить карточку или статистику. Запрос DELETE удаляет школьника и его адрес и возвращает HTTP 204.
+4. Проверить ошибки. Некорректный JSON, недопустимые значения или класс другой школы дают HTTP 400. Для отсутствующего ID сервер возвращает HTTP 404.
 
-| Метод | URL | Результат |
+| Метод | Маршрут | Успешный результат |
 | --- | --- | --- |
-| GET | `/api/schoolboys` | Список, 200 |
-| POST | `/api/schoolboys` | Новая запись, 201 и заголовок Location |
-| GET | `/api/schoolboys/{id}` | Карточка, 200 |
-| PUT | `/api/schoolboys/{id}` | Замена данных, 200 |
-| PATCH | `/api/schoolboys/{id}` | Изменение указанных полей, 200 |
+| GET | `/api/schools` | Каталог школ и классов, 200 |
+| GET | `/api/schoolboys` | Список школьников, 200 |
+| POST | `/api/schoolboys` | Новая карточка и заголовок `Location`, 201 |
+| GET | `/api/schoolboys/{id}` | Карточка по ID, 200 |
+| PUT | `/api/schoolboys/{id}` | Полная замена данных, 200 |
+| PATCH | `/api/schoolboys/{id}` | Частичное обновление, 200 |
 | DELETE | `/api/schoolboys/{id}` | Удаление, 204 |
-| GET | `/api/schoolboys/statistics` | Число школьников по школе и классу, 200 |
+| GET | `/api/schoolboys/statistics` | Количество школьников по школам и классам, 200 |
 
-POST и PUT принимают объект с личными данными, `schoolId`, `classId` и вложенным `address`. Ответ содержит идентификатор, этот объект в поле `data` и названия школы и класса. PATCH поддерживает частичное изменение полей адреса.
+## Скриншоты результатов тестирования (curl или Postman)
 
-```bash
-base=http://127.0.0.1:8084
-curl -i "$base/api/schools"
-curl -i "$base/api/schoolboys"
-curl -i "$base/api/schoolboys/1"
-cat > schoolboy.json <<'JSON'
-{
-  "surname": "Фомин", "name": "Артём", "patronymic": "Олегович",
-  "gender": "Мужской", "nationality": "Русский", "height": 156.5, "weight": 48.0,
-  "birthDate": "2013-04-15", "phoneNumber": "+7 900 000-44-01",
-  "schoolId": 1, "classId": 1,
-  "address": {
-    "postalCode": "101000", "country": "Россия", "region": "Москва",
-    "district": "Басманный", "city": "Москва", "street": "Покровка", "house": "8"
-  }
-}
-JSON
-created=$(curl -sS --fail -H 'Content-Type: application/json' \
-  --data-binary @schoolboy.json "$base/api/schoolboys")
-id=$(printf '%s' "$created" | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
-curl -i -X PUT -H 'Content-Type: application/json' --data-binary @schoolboy.json "$base/api/schoolboys/$id"
-curl -i -X PATCH -H 'Content-Type: application/json' -d '{"address":{"apartment":"17"}}' "$base/api/schoolboys/$id"
-curl -i "$base/api/schoolboys/statistics"
-curl -i -X DELETE "$base/api/schoolboys/$id"
-```
+**Создание, частичное изменение, удаление и ответ для удалённой записи**
 
-## Запуск в IntelliJ IDEA
+![Создание, частичное изменение, удаление и ответ для удалённой записи](docs/screenshots/curl-crud.png)
 
-1. Откройте папку с файлом `pom.xml` в IntelliJ IDEA и дождитесь импорта Maven.
-2. В **File → Project Structure → Project SDK** выберите JDK 17, если среда ещё не выбрала его.
-3. Выберите конфигурацию **Лабораторная 4** и нажмите **Run**. Откройте [страницу приложения](http://127.0.0.1:8084/api/schoolboys/1).
+**Чтение карточки, статистика и проверка ошибок валидации**
 
-Данные H2 находятся в памяти. После перезапуска восстанавливаются демонстрационные записи.
-
-Для проверки проекта из терминала выполните `./mvnw clean verify`.
-
-## Скриншоты работы приложения
-
-**Получение карточки школьника**
-
-![Получение карточки школьника](docs/screenshots/response.png)
-
-**Статистика по школам и классам**
-
-![Статистика по школам и классам](docs/screenshots/statistics.png)
+![Чтение карточки, статистика и проверка ошибок валидации](docs/screenshots/curl-statistics.png)
